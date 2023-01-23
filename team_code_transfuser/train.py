@@ -1,19 +1,24 @@
+#!/usr/bin/env python
+
 import argparse
 import json
 import os
-from tqdm import tqdm
+from typing import Callable
+from tqdm import tqdm, trange
+import psutil
 
 import numpy as np
 import torch
-import torch.distributed as dist
+import torch.distributed
+import torch.backends.cudnn
 import torch.optim as optim
+import torch.utils.data.distributed
 from torch.utils.data import DataLoader
 from torch.utils.tensorboard import SummaryWriter
-import wandb
 
-from config import GlobalConfig
-from model import LidarCenterNet
-from data import CARLA_Data, lidar_bev_cam_correspondences
+from src.config import GlobalConfig
+from src.transfuser import TransFuser
+from src.data import CARLA_Data, lidar_bev_cam_correspondences
 
 import pathlib
 import datetime
@@ -32,14 +37,14 @@ def main():
     parser.add_argument('--id', type=str, default='transfuser', help='Unique experiment identifier.')
     parser.add_argument('--epochs', type=int, default=41, help='Number of train epochs.')
     parser.add_argument('--lr', type=float, default=1e-4, help='Learning rate.')
-    parser.add_argument('--batch_size', type=int, default=8, help='Batch size for one GPU. When training with multiple GPUs the effective batch size will be batch_size*num_gpus')
-    parser.add_argument('--logdir', type=str, default='log', help='Directory to log data to.')
+    parser.add_argument('--batch_size', type=int, default=12, help='Batch size for one GPU. When training with multiple GPUs the effective batch size will be batch_size*num_gpus')
+    parser.add_argument('--logdir', type=str, default='/logs', help='Directory to log data to.')
     parser.add_argument('--load_file', type=str, default=None, help='ckpt to load.')
     parser.add_argument('--start_epoch', type=int, default=0, help='Epoch to start with. Useful when continuing trainings via load_file.')
     parser.add_argument('--setting', type=str, default='all', help='What training setting to use. Options: '
                                                                    'all: Train on all towns no validation data. '
                                                                    '02_05_withheld: Do not train on Town 02 and Town 05. Use the data as validation data.')
-    parser.add_argument('--root_dir', type=str, default=r'/lhome/sindreku/master_project/transfuser/data', help='Root directory of your training data')
+    parser.add_argument('--root_dir', type=str, default=R'/dataset', help='Root directory of your training data')
     parser.add_argument('--schedule', type=int, default=1,
                         help='Whether to train with a learning rate schedule. 1 = True')
     parser.add_argument('--schedule_reduce_epoch_01', type=int, default=30,
@@ -54,14 +59,14 @@ def main():
                         help='Which architecture to use for the lidar branch. Tested: efficientnet_b0, resnet34, regnety_032 etc.')
     parser.add_argument('--use_velocity', type=int, default=0,
                         help='Whether to use the velocity input. Currently only works with the TransFuser backbone. Expected values are 0:False, 1:True')
-    parser.add_argument('--n_layer', type=int, default=2, help='Number of transformer layers used in the transfuser')
+    parser.add_argument('--n_layer', type=int, default=4, help='Number of transformer layers used in the transfuser')
     parser.add_argument('--wp_only', type=int, default=0,
                         help='Valid values are 0, 1. 1 = using only the wp loss; 0= using all losses')
     parser.add_argument('--use_target_point_image', type=int, default=1,
                         help='Valid values are 0, 1. 1 = using target point in the LiDAR0; 0 = dont do it')
     parser.add_argument('--use_point_pillars', type=int, default=0,
                         help='Whether to use the point_pillar lidar encoder instead of voxelization. 0:False, 1:True')
-    parser.add_argument('--parallel_training', type=int, default=0,
+    parser.add_argument('--parallel_training', type=str, default='auto',
                         help='If this is true/1 you need to launch the train.py script with CUDA_VISIBLE_DEVICES=0,1 torchrun --nnodes=1 --nproc_per_node=2 --max_restarts=0 --rdzv_id=123456780 --rdzv_backend=c10d train.py '
                              ' the code will be parallelized across GPUs. If set to false/0, you launch the script with python train.py and only 1 GPU will be used.')
     parser.add_argument('--val_every', type=int, default=5, help='At which epoch frequency to validate.')
@@ -72,8 +77,24 @@ def main():
 
 
     args = parser.parse_args()
+    args.id += datetime.datetime.now().strftime("-%Y-%m-%d_%H-%M-%S")
     args.logdir = os.path.join(args.logdir, args.id)
-    parallel = bool(args.parallel_training)
+
+    if not find_parent_process(lambda proc: any(test in proc.name() for test in ['screen', 'tmux'])):
+        print("WARNING: Didn't find screen or tmux in the process tree.")
+
+    if args.parallel_training == '0':
+        parallel = False
+    elif args.parallel_training == '1':
+        parallel = True
+    elif args.parallel_training == 'auto':
+        parallel = 'LOCAL_RANK' in os.environ
+        if parallel:
+            print('Auto detected parallel training')
+        else:
+            print('Auto detected single training')
+    else:
+        raise ValueError(f'Invalid value "{args.parallel_training}" given to --parallel_training (0/1/auto).')
 
     if(bool(args.use_disk_cache) == True):
         if (parallel == True):
@@ -126,7 +147,7 @@ def main():
         config.detailed_losses_weights[index_bev] = 0.0
 
     # Create model and optimizers
-    model = LidarCenterNet(config, device, args.backbone, args.image_architecture, args.lidar_architecture, bool(args.use_velocity))
+    model = TransFuser(config, device, args.backbone, args.image_architecture, args.lidar_architecture, bool(args.use_velocity))
 
     if (parallel == True):
         # Synchronizing the Batch Norms increases the Batch size with which they are compute by *num_gpus
@@ -160,8 +181,8 @@ def main():
         dataloader_train = DataLoader(train_set, sampler=sampler_train, batch_size=args.batch_size, worker_init_fn=seed_worker, generator=g_cuda, num_workers=8, pin_memory=True)
         dataloader_val   = DataLoader(val_set,   sampler=sampler_val,   batch_size=args.batch_size, worker_init_fn=seed_worker, generator=g_cuda, num_workers=8, pin_memory=True)
     else:
-      dataloader_train = DataLoader(train_set, shuffle=True, batch_size=args.batch_size, worker_init_fn=seed_worker, generator=g_cuda, num_workers=0, pin_memory=True)
-      dataloader_val   = DataLoader(val_set,   shuffle=True, batch_size=args.batch_size, worker_init_fn=seed_worker, generator=g_cuda, num_workers=0, pin_memory=True)
+      dataloader_train = DataLoader(train_set, shuffle=True, batch_size=args.batch_size, worker_init_fn=seed_worker, generator=g_cuda, num_workers=8, pin_memory=True)
+      dataloader_val   = DataLoader(val_set,   shuffle=True, batch_size=args.batch_size, worker_init_fn=seed_worker, generator=g_cuda, num_workers=8, pin_memory=True)
 
     # Create logdir
     if ((not os.path.isdir(args.logdir)) and (rank == 0)):
@@ -188,7 +209,7 @@ def main():
                      args=args, config=config, writer=writer, device=device, rank=rank, world_size=world_size,
                      parallel=parallel, cur_epoch=args.start_epoch)
 
-    for epoch in range(trainer.cur_epoch, args.epochs):
+    for epoch in trange(trainer.cur_epoch, args.epochs, desc='Epoch', dynamic_ncols=True):
         if(parallel == True):
             # Update the seed depending on the epoch so that the distributed sampler will use different shuffles across different epochs
             sampler_train.set_epoch(epoch)
@@ -302,7 +323,7 @@ class Engine(object):
         self.cur_epoch += 1
 
         # Train loop
-        for data in tqdm(self.dataloader_train):
+        for data in tqdm(self.dataloader_train, desc='Iteration', dynamic_ncols=True, leave=False):
             self.optimizer.zero_grad(set_to_none=True)
             losses = self.load_data_compute_loss(data)
             loss = torch.tensor(0.0).to(self.device, dtype=torch.float32)
@@ -390,6 +411,16 @@ def seed_worker(worker_id):
     worker_seed = (torch.initial_seed()) % 2**32
     np.random.seed(worker_seed)
     random.seed(worker_seed)
+
+
+def find_parent_process(predicate: Callable[[psutil.Process], bool]):
+    """Find the parent process of the current process that matches the given predicate."""
+    parent = psutil.Process().parent()
+    while parent is not None:
+        if predicate(parent):
+            return parent
+        parent = parent.parent()
+    return None
 
 
 if __name__ == "__main__":

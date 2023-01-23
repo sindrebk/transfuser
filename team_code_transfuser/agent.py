@@ -11,11 +11,10 @@ import torch
 import numpy as np
 import math
 
-
 from leaderboard.autoagents import autonomous_agent
-from model import LidarCenterNet
-from config import GlobalConfig
-from data import lidar_to_histogram_features, draw_target_point, lidar_bev_cam_correspondences
+from src.transfuser import TransFuser
+from src.config import GlobalConfig
+from src.data import lidar_to_histogram_features, draw_target_point, lidar_bev_cam_correspondences
 
 from shapely.geometry import Polygon
 
@@ -89,7 +88,7 @@ class HybridAgent(autonomous_agent.AutonomousAgent):
             if file.endswith(".pth"):
                 self.model_count += 1
                 print(os.path.join(path_to_conf_file, file))
-                net = LidarCenterNet(self.config, 'cuda', self.backbone, image_architecture, lidar_architecture, use_velocity)
+                net = TransFuser(self.config, 'cuda', self.backbone, image_architecture, lidar_architecture, use_velocity)
                 if(self.config.sync_batch_norm == True):
                     net = torch.nn.SyncBatchNorm.convert_sync_batchnorm(net) # Model was trained with Sync. Batch Norm. Need to convert it otherwise parameters will load incorrectly.
                 state_dict = torch.load(os.path.join(path_to_conf_file, file), map_location='cuda:0')
@@ -163,14 +162,14 @@ class HybridAgent(autonomous_agent.AutonomousAgent):
                         'id': 'speed'
                         }
                     ]
-        # if(SAVE_PATH != None): #Debug camera for visualizations
-        #     sensors.append({
-        #                     'type': 'sensor.camera.rgb',
-        #                     'x': -4.5, 'y': 0.0, 'z':2.3,
-        #                     'roll': 0.0, 'pitch': -15.0, 'yaw': 0.0,
-        #                     'width': 960, 'height': 480, 'fov': 100,
-        #                     'id': 'rgb_back'
-        #                     })
+        if(SAVE_PATH != None): #Debug camera for visualizations
+            sensors.append({
+                            'type': 'sensor.camera.rgb',
+                            'x': -4.5, 'y': 0.0, 'z':2.3,
+                            'roll': 0.0, 'pitch': -15.0, 'yaw': 0.0,
+                            'width': 960, 'height': 480, 'fov': 100,
+                            'id': 'rgb_back'
+                            })
 
         if (self.backbone != 'latentTF'):  # LiDAR method
             sensors.append({
@@ -187,17 +186,13 @@ class HybridAgent(autonomous_agent.AutonomousAgent):
         for pos in ['left', 'front', 'right']:
             rgb_cam = 'rgb_' + pos
             rgb_pos = cv2.cvtColor(input_data[rgb_cam][1][:, :, :3], cv2.COLOR_BGR2RGB)
-            # if "front" in pos:
-            #     cv2.imshow("rgb_front", rgb_pos)
-            #     if cv2.waitKey(1) & 0xFF == ord('q'):
-            #         os.sys.exit()
             rgb_pos = self.scale_crop(Image.fromarray(rgb_pos), self.config.scale, self.config.img_width, self.config.img_width, self.config.img_resolution[0], self.config.img_resolution[0])
             rgb.append(rgb_pos)
         rgb = np.concatenate(rgb, axis=1)
 
         if(SAVE_PATH != None): #Debug camera for visualizations
             # don't need buffer for it always use the latest one
-            self.rgb_back = None #input_data["rgb_back"][1][:, :, :3]
+            self.rgb_back = input_data["rgb_back"][1][:, :, :3]
 
         gps = input_data['gps'][1][:2]
         speed = input_data['speed'][1]['speed']
