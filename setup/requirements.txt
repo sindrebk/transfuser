@@ -1,0 +1,26 @@
+-f https://download.openmmlab.com/mmcv/dist/cu116/torch1.13.0/index.html
+-f https://data.pyg.org/whl/torch-1.13.0+cu116.html
+
+carla==0.9.13
+click
+dictor
+diskcache
+ephem
+mmcv-full
+mmdet
+networkx
+numpy
+opencv-python-headless
+Pillow
+psutil
+py-trees==0.8.3
+pygame
+requests
+scikit-image
+Shapely
+six
+tabulate
+tensorboard
+timm
+torch-scatter
+ujson
