@@ -9,6 +9,7 @@ import torch.distributed as dist
 import torch.optim as optim
 from torch.utils.data import DataLoader
 from torch.utils.tensorboard import SummaryWriter
+import wandb
 
 from config import GlobalConfig
 from model import LidarCenterNet
@@ -31,14 +32,14 @@ def main():
     parser.add_argument('--id', type=str, default='transfuser', help='Unique experiment identifier.')
     parser.add_argument('--epochs', type=int, default=41, help='Number of train epochs.')
     parser.add_argument('--lr', type=float, default=1e-4, help='Learning rate.')
-    parser.add_argument('--batch_size', type=int, default=12, help='Batch size for one GPU. When training with multiple GPUs the effective batch size will be batch_size*num_gpus')
+    parser.add_argument('--batch_size', type=int, default=8, help='Batch size for one GPU. When training with multiple GPUs the effective batch size will be batch_size*num_gpus')
     parser.add_argument('--logdir', type=str, default='log', help='Directory to log data to.')
     parser.add_argument('--load_file', type=str, default=None, help='ckpt to load.')
     parser.add_argument('--start_epoch', type=int, default=0, help='Epoch to start with. Useful when continuing trainings via load_file.')
     parser.add_argument('--setting', type=str, default='all', help='What training setting to use. Options: '
                                                                    'all: Train on all towns no validation data. '
                                                                    '02_05_withheld: Do not train on Town 02 and Town 05. Use the data as validation data.')
-    parser.add_argument('--root_dir', type=str, default=r'/mnt/qb/geiger/kchitta31/datasets/carla/pami_v1_dataset_23_11', help='Root directory of your training data')
+    parser.add_argument('--root_dir', type=str, default=r'/lhome/sindreku/master_project/transfuser/data', help='Root directory of your training data')
     parser.add_argument('--schedule', type=int, default=1,
                         help='Whether to train with a learning rate schedule. 1 = True')
     parser.add_argument('--schedule_reduce_epoch_01', type=int, default=30,
@@ -53,14 +54,14 @@ def main():
                         help='Which architecture to use for the lidar branch. Tested: efficientnet_b0, resnet34, regnety_032 etc.')
     parser.add_argument('--use_velocity', type=int, default=0,
                         help='Whether to use the velocity input. Currently only works with the TransFuser backbone. Expected values are 0:False, 1:True')
-    parser.add_argument('--n_layer', type=int, default=4, help='Number of transformer layers used in the transfuser')
+    parser.add_argument('--n_layer', type=int, default=2, help='Number of transformer layers used in the transfuser')
     parser.add_argument('--wp_only', type=int, default=0,
                         help='Valid values are 0, 1. 1 = using only the wp loss; 0= using all losses')
     parser.add_argument('--use_target_point_image', type=int, default=1,
                         help='Valid values are 0, 1. 1 = using target point in the LiDAR0; 0 = dont do it')
     parser.add_argument('--use_point_pillars', type=int, default=0,
                         help='Whether to use the point_pillar lidar encoder instead of voxelization. 0:False, 1:True')
-    parser.add_argument('--parallel_training', type=int, default=1,
+    parser.add_argument('--parallel_training', type=int, default=0,
                         help='If this is true/1 you need to launch the train.py script with CUDA_VISIBLE_DEVICES=0,1 torchrun --nnodes=1 --nproc_per_node=2 --max_restarts=0 --rdzv_id=123456780 --rdzv_backend=c10d train.py '
                              ' the code will be parallelized across GPUs. If set to false/0, you launch the script with python train.py and only 1 GPU will be used.')
     parser.add_argument('--val_every', type=int, default=5, help='At which epoch frequency to validate.')
