@@ -19,7 +19,7 @@ ENV PATH="$VIRTUAL_ENV/bin:$PATH"
 
 COPY setup /tmp/setup
 RUN --mount=type=cache,target=/root/.cache/pip \
-    /tmp/setup/install-deps.sh && \
+    /tmp/setup/install-deps.zsh && \
     rm -rf /tmp/setup
 
 ENV TRANSFUSER_PATH=/code/transfuser
