@@ -1,5 +1,38 @@
 # TransFuser: Imitation with Transformer-Based Sensor Fusion for Autonomous Driving
 
+## Get started
+
+1) Build the docker image
+
+```bash
+docker build . -t transfuser
+```
+
+2) Create folders for data
+
+```bash
+mkdir models results
+```
+
+3) Start the container
+  
+```bash
+docker run -it --rm --gpus all -v "$(pwd)/models:/models" -v "$(pwd)/results:/results" --network host transfuser
+```
+
+4) Download the model weights
+  
+```bash
+./scripts/download_models.sh
+```
+
+5) Run the demo. Make sure a Carla server is running on `localhost:2000`.
+
+```bash
+./scripts/test_run.sh
+```
+
+
 ## [Paper](http://www.cvlibs.net/publications/Chitta2022PAMI.pdf) | [Supplementary](http://www.cvlibs.net/publications/Chitta2022PAMI_supplementary.pdf) | [Talk](https://www.youtube.com/watch?v=-GMhYcxOiEU) | [Poster](http://www.cvlibs.net/publications/Chitta2022PAMI_poster.pdf) 
 
 [![PWC](https://img.shields.io/endpoint.svg?url=https://paperswithcode.com/badge/transfuser-imitation-with-transformer-based/autonomous-driving-on-carla-leaderboard)](https://paperswithcode.com/sota/autonomous-driving-on-carla-leaderboard?p=transfuser-imitation-with-transformer-based)
@@ -143,7 +176,7 @@ Once the CARLA server is running, evaluate an agent with the script:
 ./leaderboard/scripts/local_evaluation.sh <carla root> <working directory of this repo (*/transfuser/)>
 ```
 
-By editing the arguments in `local_evaluation.sh`, we can benchmark performance on the Longest6 routes. You can evaluate both privileged agents (such as [autopilot.py]) and sensor-based models. To evaluate the sensor-based models use [submission_agent.py](./team_code_transfuser/submission_agent.py) as the `TEAM_AGENT` and point to the folder you downloaded the model weights into for the `TEAM_CONFIG`. The code is automatically configured to use the correct method based on the args.txt file in the model folder.
+By editing the arguments in `local_evaluation.sh`, we can benchmark performance on the Longest6 routes. You can evaluate both privileged agents (such as [autopilot.py]) and sensor-based models. To evaluate the sensor-based models use [agent.py](./team_code_transfuser/agent.py) as the `TEAM_AGENT` and point to the folder you downloaded the model weights into for the `TEAM_CONFIG`. The code is automatically configured to use the correct method based on the args.txt file in the model folder.
 
 ### Parsing longest6 results
 To compute additional statistics from the results of evaluation runs we provide a parser script [tools/result_parser.py](./tools/result_parser.py).
